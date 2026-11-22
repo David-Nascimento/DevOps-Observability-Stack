@@ -1,0 +1,28 @@
+# Jenkins como código (JCasC): o mesmo resultado em qualquer máquina, sem cliques.
+jenkins:
+  systemMessage: "Jenkins do ambiente de observabilidade - configurado por JCasC."
+  numExecutors: 3
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_ID}"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+unclassified:
+  location:
+    url: "http://localhost:8080/"
+  prometheusConfiguration:
+    path: "prometheus"
+    useAuthenticatedEndpoint: false
+    defaultNamespace: "default"
+    collectingMetricsPeriodInSeconds: 15
+
+jobs:
+  - file: /var/jenkins_casc/jobs/karate-api-tests.groovy
+  - file: /var/jenkins_casc/jobs/ruby-e2e-tests.groovy
+  - file: /var/jenkins_casc/jobs/projetos-extras.groovy
+  - file: /var/jenkins_casc/jobs/esteira-qa.groovy

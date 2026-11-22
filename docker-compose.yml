@@ -1,0 +1,144 @@
+# Stack de CI + observabilidade: Jenkins, Prometheus, Loki, Alloy, Grafana, cAdvisor e node-exporter.
+# Subir: docker compose up -d --build        Derrubar: docker compose down  (use -v para apagar os dados)
+name: devops-observability
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  jenkins:
+    <<: *restart
+    build: ./jenkins
+    ports:
+      - "8080:8080"
+    environment:
+      JENKINS_ADMIN_ID: ${JENKINS_ADMIN_ID:-admin}
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:?defina JENKINS_ADMIN_PASSWORD no arquivo .env}
+      CASC_JENKINS_CONFIG: /var/jenkins_casc/jenkins.yaml
+      # CSP vazio: permite que o Allure Report (JavaScript) abra dentro do Jenkins. Ambiente local apenas.
+      JAVA_OPTS: -Djenkins.install.runSetupWizard=false -Dhudson.model.DirectoryBrowserSupport.CSP=
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - ./jenkins/casc:/var/jenkins_casc:ro
+    depends_on:
+      - selenium
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/login >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  # Navegador (Chromium) usado pelos testes de UI do Ruby E2E. Ver ao vivo: http://localhost:7900 (senha: secret)
+  selenium:
+    <<: *restart
+    image: selenium/standalone-chromium:${SELENIUM_VERSION:-latest}
+    shm_size: 2g
+    ports:
+      - "4444:4444"
+      - "7900:7900"
+    healthcheck:
+      test: ["CMD", "/opt/bin/check-grid.sh", "--host", "0.0.0.0", "--port", "4444"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  prometheus:
+    <<: *restart
+    image: prom/prometheus:${PROMETHEUS_VERSION:-latest}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      - jenkins
+      - cadvisor
+      - node-exporter
+
+  loki:
+    <<: *restart
+    image: grafana/loki:${LOKI_VERSION:-latest}
+    command: -config.file=/etc/loki/loki-config.yaml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/loki
+
+  # Coletor de logs dos containers. Substitui o Promtail, que chegou ao fim da vida em 02/03/2026.
+  alloy:
+    <<: *restart
+    image: grafana/alloy:${ALLOY_VERSION:-latest}
+    user: root
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    ports:
+      - "12345:12345"
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - alloy_data:/var/lib/alloy/data
+    depends_on:
+      - loki
+
+  grafana:
+    <<: *restart
+    image: grafana/grafana:${GRAFANA_VERSION:-latest}
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?defina GRAFANA_ADMIN_PASSWORD no arquivo .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Destino dos alertas (webhook: Slack, Teams, Discord, n8n...). Veja o README.
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-http://localhost:9/}
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/jenkins-karate.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      - prometheus
+      - loki
+
+  cadvisor:
+    <<: *restart
+    image: gcr.io/cadvisor/cadvisor:${CADVISOR_VERSION:-latest}
+    privileged: true
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
+  node-exporter:
+    <<: *restart
+    image: prom/node-exporter:${NODE_EXPORTER_VERSION:-latest}
+    ports:
+      - "9100:9100"
+
+volumes:
+  jenkins_home:
+  prometheus_data:
+  loki_data:
+  alloy_data:
+  grafana_data:
