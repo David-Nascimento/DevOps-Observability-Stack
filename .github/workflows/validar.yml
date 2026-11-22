@@ -1,0 +1,22 @@
+name: Validar stack
+
+# Disparo manual por padrão. Para validar a cada push/PR, adicione:
+#   push:
+#     branches: [main]
+#   pull_request:
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Instalar PyYAML
+        run: pip install pyyaml
+      - name: Validar compose, JSON e YAML
+        run: ./scripts/validar.sh

@@ -5,7 +5,7 @@
     "observabilidade"
   ],
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "editable": true,
   "time": {
     "from": "now-6h",
@@ -477,6 +477,38 @@
           "fields": "",
           "values": false
         }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Duração média dos builds (janela de 24h)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 37,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg_over_time(default_jenkins_builds_last_build_duration_milliseconds[24h])",
+          "legendFormat": "{{jenkins_job}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
       }
     }
   ],

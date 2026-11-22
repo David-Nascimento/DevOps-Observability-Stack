@@ -18,7 +18,7 @@ def posBuild = '''
   }
 '''
 
-def modelo = { String repo, String instalar, String executar, String junit, String allure, boolean copiaXml ->
+def modelo = { String repo, String instalar, String executar, String junit, String allure, boolean copiaXml, String envVars ->
   def copia = copiaXml ? "      sh 'mkdir -p allure-results && cp " + junit + " allure-results/ 2>/dev/null || true'\n" : ''
   def texto = '''
 pipeline {
@@ -28,7 +28,7 @@ pipeline {
     timeout(time: 25, unit: 'MINUTES')
     buildDiscarder(logRotator(numToKeepStr: '20'))
   }
-  stages {
+@@ENVBLOCK@@  stages {
     stage('Checkout') {
       steps {
         git url: '@@URL@@', branch: 'main'
@@ -48,6 +48,8 @@ pipeline {
 ''' + posBuild + '''
 }
 '''
+  def envBloco = envVars ? "  environment {\n    " + envVars + "\n  }\n" : ''
+  texto = texto.replace('@@ENVBLOCK@@', envBloco)
   texto = texto.replace('@@COPIA@@\n', copia)
   texto = texto.replace('@@JUNIT@@', junit).replace('@@ALLURE@@', allure)
   texto = texto.replace('@@URL@@', github + repo).replace('@@INSTALAR@@', instalar).replace('@@EXECUTAR@@', executar)
@@ -57,35 +59,36 @@ pipeline {
 def projetos = [
   [
     nome: 'cypress-api-serverest', repo: 'desafio-api-qa',
-    desc: 'Testes de API com Cypress contra o ServeRest (login, usuarios, produtos e carrinhos)',
+    desc: 'Testes de API com Cypress contra o ServeRest (login, usuarios, produtos e carrinhos) no ServeRest local do compose',
     instalar: 'npm ci', executar: 'npx cypress run --reporter junit --reporter-options mochaFile=results/junit-[hash].xml',
-    junit: 'results/*.xml', allure: 'allure-results', copiaXml: true
+    junit: 'results/*.xml', allure: 'allure-results', copiaXml: true,
+    env: "CYPRESS_BASE_URL = 'http://serverest:3000'"
   ],
   [
     nome: 'playwright-cronicas-battleon', repo: 'cronicas-de-battleon',
     desc: 'Build, checagem de tipos e testes E2E com Playwright do portal Cronicas de Battleon',
     instalar: 'npm ci && npx playwright install chromium', executar: 'npm run build && npm run typecheck && npm test',
-    junit: 'nao-gera-junit/*.xml', allure: 'allure-results', copiaXml: false
+    junit: 'nao-gera-junit/*.xml', allure: 'allure-results', copiaXml: false, env: ''
   ],
   [
     nome: 'qa-playground-checks', repo: 'QA-Playground',
     desc: 'Build e verificacoes de qualidade (DOM, links e contrato da API mock) do QA Playground',
     instalar: 'npm ci', executar: 'npm run qa',
-    junit: 'nao-gera-junit/*.xml', allure: 'allure-results', copiaXml: false
+    junit: 'nao-gera-junit/*.xml', allure: 'allure-results', copiaXml: false, env: ''
   ],
   [
     nome: 'ruby-api-httparty', repo: 'Httparty-Cucumber-Structury',
     desc: 'Testes de API em Ruby (HTTParty + Cucumber) contra o Petstore',
     instalar: 'bundle config set --local path vendor/bundle && bundle install --jobs 4',
     executar: 'rm -rf allure-results reports && mkdir -p reports/junit && bundle exec cucumber --format junit --out reports/junit',
-    junit: 'reports/junit/*.xml', allure: 'allure-results', copiaXml: false
+    junit: 'reports/junit/*.xml', allure: 'allure-results', copiaXml: false, env: ''
   ],
   [
     nome: 'ruby-unit-rspec', repo: 'unit-testes-ruby',
     desc: 'Testes unitarios em Ruby com RSpec (exemplo de dominio bancario)',
     instalar: 'bundle config set --local path vendor/bundle && bundle install --jobs 4',
     executar: 'mkdir -p reports && bundle exec rspec --format progress --format RspecJunitFormatter --out reports/rspec.xml',
-    junit: 'reports/*.xml', allure: 'allure-results', copiaXml: true
+    junit: 'reports/*.xml', allure: 'allure-results', copiaXml: true, env: ''
   ],
 ]
 
@@ -95,7 +98,7 @@ projetos.each { p ->
     definition {
       cps {
         sandbox(true)
-        script(modelo(p.repo, p.instalar, p.executar, p.junit, p.allure, p.copiaXml).stripIndent())
+        script(modelo(p.repo, p.instalar, p.executar, p.junit, p.allure, p.copiaXml, p.env).stripIndent())
       }
     }
   }

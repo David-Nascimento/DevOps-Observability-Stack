@@ -9,6 +9,8 @@ Ambiente de CI com observabilidade, subindo com um comando: **Jenkins** executa 
 | Serviço | Função | Porta |
 |---|---|---|
 | Jenkins | CI configurado por código (JCasC), com os jobs `karate-api-tests`, `ruby-e2e-tests` e `esteira-qa` | 8080 |
+| ServeRest | API local alvo dos testes do Karate e do Cypress (porta 3001 no host) | 3001 |
+| docker-socket-proxy | Dá ao Alloy só leitura de containers e logs, sem expor o `docker.sock` inteiro | - |
 | Selenium | Navegador (Chromium) dos testes de UI do Ruby; ver ao vivo em :7900 (senha `secret`) | 4444 / 7900 |
 | Prometheus | Métricas do Jenkins, containers e host | 9090 |
 | Loki | Armazenamento de logs (retenção de 7 dias) | 3100 |
@@ -19,10 +21,22 @@ Ambiente de CI com observabilidade, subindo com um comando: **Jenkins** executa 
 
 O Alloy substitui o Promtail, que chegou ao fim da vida em 02/03/2026.
 
-```
-containers ──logs──► Alloy ──► Loki ──┐
-Jenkins /prometheus ─┐                ├──► Grafana
-cAdvisor, node ──────┴─► Prometheus ──┘
+```mermaid
+flowchart LR
+  subgraph CI[Esteira de testes]
+    J[Jenkins] --> K[Karate API]
+    J --> R[Ruby E2E]
+    J --> X[Projetos extras]
+    K --> S[(ServeRest local)]
+    R --> W[Selenium]
+  end
+  J -- /prometheus --> P[Prometheus]
+  CA[cAdvisor] --> P
+  N[node-exporter] --> P
+  C[containers] -- logs --> SP[docker-socket-proxy] --> A[Alloy] --> L[Loki]
+  P --> G[Grafana]
+  L --> G
+  G -- alertas --> WH[Webhook]
 ```
 
 ## Primeira execução
@@ -47,7 +61,7 @@ Depois, no Jenkins, abra o job **esteira-qa** e clique em **Build with Parameter
 | Job | O que faz | Repositório |
 |---|---|---|
 | `esteira-qa` | Dispara os dois jobs abaixo em paralelo; roda de seg. a sex. de manhã (cron) | - |
-| `karate-api-tests` | `mvn test` contra a API pública ServeRest (parâmetros: tags, ambiente, threads) | [karate-api-framework](https://github.com/David-Nascimento/karate-api-framework) |
+| `karate-api-tests` | `mvn test` contra o ServeRest local do compose (parâmetros: tags, ambiente `docker` ou `dev`, threads) | [karate-api-framework](https://github.com/David-Nascimento/karate-api-framework) |
 | `ruby-e2e-tests` | Cucumber no perfil escolhido (`ci`, `api`, `smoke`, `a11y`, `regression`); a UI roda no Selenium do compose | [ruby-e2e-framework](https://github.com/David-Nascimento/ruby-e2e-framework) |
 
 Cada build tem, no menu lateral, as abas **Allure Report** (Karate e Ruby) e **Karate Report** (só o Karate), além dos resultados JUnit. O Allure mostra histórico, categorias de falha, passos e anexos; o Ruby usa o formatador nativo do Allure e o Karate entra pelo JUnit XML (com menos detalhes que o relatório nativo do Karate).
@@ -60,7 +74,7 @@ Gerados a partir dos repositórios do GitHub, em `jenkins/casc/jobs/projetos-ext
 
 | Job | Repositório | O que roda |
 |---|---|---|
-| `cypress-api-serverest` | desafio-api-qa | Cypress (API) contra o ServeRest |
+| `cypress-api-serverest` | desafio-api-qa | Cypress (API) contra o ServeRest local |
 | `playwright-cronicas-battleon` | cronicas-de-battleon | build, checagem de tipos e testes E2E (Playwright) |
 | `qa-playground-checks` | QA-Playground | build + `npm run qa` (DOM, links e contrato da API mock) |
 | `ruby-api-httparty` | Httparty-Cucumber-Structury | Cucumber + HTTParty contra o Petstore (serviço externo, pode oscilar) |
@@ -122,7 +136,9 @@ docker compose ps                                    # estado e saúde dos servi
 
 Restaurar um volume (com a stack parada): `./scripts/restore.sh backups/<pasta> jenkins_home`.
 
-**Fixar versões:** as imagens usam `latest` por padrão. Rode `docker compose images`, copie as versões para o `.env` (variáveis `GRAFANA_VERSION`, `LOKI_VERSION` etc., ver `.env.example`) e o ambiente deixa de mudar sozinho.
+**Fixar versões:** as imagens usam `latest` por padrão. Descubra a versão em uso (`docker compose exec prometheus prometheus --version`, `docker compose exec loki loki -version`, `docker compose exec alloy alloy --version`; no Grafana, o rodapé da tela) e informe no `.env` (`GRAFANA_VERSION`, `LOKI_VERSION` etc., ver `.env.example`). O ambiente deixa de mudar sozinho.
+
+**Validar antes de subir ou commitar:** `.\scripts\validar.ps1` (PowerShell) ou `./scripts/validar.sh`. Há também o workflow manual `.github/workflows/validar.yml`.
 
 ## Diagnóstico: Jenkins ou Grafana sem dados
 
@@ -137,7 +153,7 @@ Restaurar um volume (com a stack parada): `./scripts/restore.sh backups/<pasta> 
 - **Allure**: a versão do CLI é o argumento `ALLURE_VERSION` do `jenkins/Dockerfile`. A segurança do Jenkins é relaxada (CSP vazio) para exibir o relatório; use só em ambiente local.
 - **cAdvisor no Docker Desktop (Windows/WSL2)**: pode não preencher o nome dos containers em todos os painéis. Em Linux nativo funciona completo.
 - **Versões**: as imagens do Grafana, Prometheus, Loki e Alloy usam `latest`. Fixe as versões no `docker-compose.yml` antes de usar fora de estudo.
-- **Segurança**: o Alloy monta o `docker.sock` (acesso total ao Docker) e o cAdvisor roda privilegiado. Adequado para ambiente local; em servidor, restrinja a rede e use um proxy de socket.
+- **Segurança**: o Alloy lê os logs por um proxy de socket (somente leitura de containers), mas o cAdvisor roda privilegiado, o Jenkins está sem a política CSP e o acesso é por HTTP. Adequado para ambiente local; em servidor, coloque um proxy reverso com HTTPS (Traefik ou Caddy), restrinja a rede e guarde segredos nas credenciais do Jenkins. Se os logs deixarem de chegar ao Loki, confira `docker compose logs alloy` e `docker-socket-proxy`.
 - **Ruby no Jenkins**: o Ruby vem do Debian (apt) e as gems instalam em `vendor/bundle` dentro do workspace. Se a instalação de alguma gem nativa falhar, o log do build mostra qual pacote do sistema falta.
 - **Logs de build**: o Grafana mostra os logs do próprio Jenkins (container). O log detalhado de cada build fica na interface do Jenkins.
 
@@ -145,5 +161,8 @@ Restaurar um volume (com a stack parada): `./scripts/restore.sh backups/<pasta> 
 
 - Agente Jenkins separado em container para executar os builds (hoje o Jenkins roda Maven, Ruby e usa o Selenium do compose).
 - Credenciais do Jenkins para segredos, assim que algum job precisar de token.
+- HTTPS com proxy reverso (Traefik ou Caddy), se for sair do ambiente local.
+- Regra de qualidade: reprovar a esteira abaixo de uma taxa mínima de sucesso.
+- Capturas de tela dos painéis e um GIF da esteira rodando, para o README.
 - Ruby E2E: o primeiro build baixa as gems (alguns minutos); depois use cache no volume.
 - Integração com o repositório `karate-api-framework` via webhook.

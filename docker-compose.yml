@@ -22,6 +22,7 @@ services:
       - ./jenkins/casc:/var/jenkins_casc:ro
     depends_on:
       - selenium
+      - serverest
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8080/login >/dev/null || exit 1"]
       interval: 15s
@@ -42,6 +43,29 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  # API alvo dos testes (Karate e Cypress): local e estável, sem depender da internet.
+  # Porta 3001 no host (a 3000 é do Grafana); dentro da rede do compose o endereço é http://serverest:3000
+  serverest:
+    <<: *restart
+    image: paulogoncalvesbh/serverest:${SERVEREST_VERSION:-latest}
+    ports:
+      - "3001:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/usuarios',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Expõe ao Alloy só a leitura de containers e logs (nunca o docker.sock inteiro).
+  docker-socket-proxy:
+    <<: *restart
+    image: tecnativa/docker-socket-proxy:${DOCKER_SOCKET_PROXY_VERSION:-latest}
+    environment:
+      CONTAINERS: 1
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
   prometheus:
     <<: *restart
@@ -88,10 +112,10 @@ services:
       - "12345:12345"
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
-      - /var/run/docker.sock:/var/run/docker.sock
       - alloy_data:/var/lib/alloy/data
     depends_on:
       - loki
+      - docker-socket-proxy
 
   grafana:
     <<: *restart

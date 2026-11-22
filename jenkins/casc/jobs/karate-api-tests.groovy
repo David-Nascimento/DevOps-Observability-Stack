@@ -8,7 +8,7 @@ pipelineJob('karate-api-tests') {
   }
   parameters {
     stringParam('TAGS', '~@wip', 'Filtro de tags do Karate, ex.: @smoke')
-    stringParam('AMBIENTE', 'dev', 'Ambiente: dev usa a API publica ServeRest')
+    stringParam('AMBIENTE', 'docker', 'docker = ServeRest local do compose (estavel); dev = API publica serverest.dev')
     stringParam('THREADS', '2', 'Threads em paralelo')
   }
   definition {

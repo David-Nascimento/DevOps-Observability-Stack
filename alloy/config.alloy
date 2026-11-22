@@ -2,7 +2,7 @@
 // Rótulos criados: container (nome) e service (nome do serviço no docker compose).
 
 discovery.docker "containers" {
-  host = "unix:///var/run/docker.sock"
+  host = "tcp://docker-socket-proxy:2375"
 }
 
 discovery.relabel "containers" {
@@ -21,7 +21,7 @@ discovery.relabel "containers" {
 }
 
 loki.source.docker "containers" {
-  host          = "unix:///var/run/docker.sock"
+  host          = "tcp://docker-socket-proxy:2375"
   targets       = discovery.docker.containers.targets
   relabel_rules = discovery.relabel.containers.rules
   labels        = { "platform" = "docker" }
